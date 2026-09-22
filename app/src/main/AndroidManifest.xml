@@ -12,13 +12,24 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TEMIApp">
 
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+
         <meta-data
             android:name="com.robotemi.sdk.metadata.SKILL"
             android:value="@string/app_name" />
 
         <meta-data
             android:name="@string/metadata_permissions"
-            android:value="com.robotemi.permission.map" />
+            android:value="com.robotemi.permission.map,com.robotemi.permission.face_recognition" />
 
         <activity
             android:name=".MainActivity"
@@ -35,6 +46,7 @@
     </application>
 
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="com.robotemi.permission.face_recognition" />
     <uses-permission android:name="com.robotemi.sdk.permission.MAP" />
 
 </manifest>
