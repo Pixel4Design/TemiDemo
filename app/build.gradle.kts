@@ -1,6 +1,16 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// Leer local.properties para exponer las claves como BuildConfig fields
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(FileInputStream(localPropertiesFile))
 }
 
 android {
@@ -17,6 +27,20 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField(
+            "String",
+            "OPENAI_API_KEY",
+            "\"${localProperties.getProperty("OPENAI_API_KEY", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "ELEVENLABS_API_KEY",
+            "\"${localProperties.getProperty("ELEVENLABS_API_KEY", "")}\""
+        )
+        androidResources {
+            noCompress += "tflite"
+        }
     }
 
     buildTypes {
@@ -32,6 +56,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     androidResources {
         noCompress += "tflite"
@@ -47,6 +72,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     testImplementation(libs.junit)
     implementation("androidx.compose.material:material-icons-extended")
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -61,7 +87,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
-    implementation("com.google.ai.edge.litert:litert:2.1.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")

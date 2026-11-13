@@ -11,6 +11,7 @@ import com.robotemi.sdk.face.OnContinuousFaceRecognizedListener
 import com.robotemi.sdk.face.OnFaceRecognizedListener
 import com.robotemi.sdk.permission.OnRequestPermissionResultListener
 import com.robotemi.sdk.permission.Permission
+import com.example.temiapp.LatestFaces
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -52,6 +53,7 @@ class TemiFaceManager(
 
     private val onContinuousFaceRecognizedListener = object : OnContinuousFaceRecognizedListener {
         override fun onContinuousFaceRecognized(contactModelList: List<ContactModel>) {
+            LatestFaces.update(contactModelList)
             // Este evento se dispara múltiples veces por segundo
             callback?.onContinuousFaceRecognized(contactModelList)
         }

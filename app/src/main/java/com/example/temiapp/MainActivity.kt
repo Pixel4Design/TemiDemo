@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -57,6 +58,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.widget.Toast
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -73,11 +75,14 @@ import com.robotemi.sdk.permission.Permission
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.util.UUID
+import java.util.Locale
 
-enum class Screen { FACE, CAMERA, MAP }
+enum class Screen { FACE, CAMERA, MAP, DETECTION, EMOTION}
 
 class MainActivity : ComponentActivity(), OnRobotReadyListener {
 
@@ -94,6 +99,8 @@ class MainActivity : ComponentActivity(), OnRobotReadyListener {
     private var faceRecognitionActive by mutableStateOf(false)
 
     private var lastRecognizedFacesText by mutableStateOf("")
+
+    private var lastRecognizedFaces by mutableStateOf<List<ContactModel>>(emptyList())
 
     // ---------------------------------------------------------
     // DETECCIÓN DE PERSONA
@@ -203,30 +210,26 @@ class MainActivity : ComponentActivity(), OnRobotReadyListener {
                     }
                 }
 
-                override fun onFaceRecognized(
-                    faces: List<ContactModel>
-                ) {
+                override fun onFaceRecognized(faces: List<ContactModel>) {
+                    LatestFaces.update(faces)
 
                     val newText = formatFaces(faces)
-
-                    if (
-                        lastRecognizedFacesText != newText
-                    ) {
+                    if (lastRecognizedFacesText != newText) {
                         lastRecognizedFacesText = newText
                     }
+                    // Usar .toList() crea un nuevo objeto en memoria que Compose SÍ detecta
+                    lastRecognizedFaces = faces.toList()
                 }
 
-                override fun onContinuousFaceRecognized(
-                    faces: List<ContactModel>
-                ) {
+                override fun onContinuousFaceRecognized(faces: List<ContactModel>) {
+                    LatestFaces.update(faces)
 
                     val newText = formatFaces(faces)
-
-                    if (
-                        lastRecognizedFacesText != newText
-                    ) {
+                    if (lastRecognizedFacesText != newText) {
                         lastRecognizedFacesText = newText
                     }
+                    // Usar .toList() fuerza el redibujado en vivo en cada frame
+                    lastRecognizedFaces = faces.toList()
                 }
             }
 
@@ -278,6 +281,9 @@ class MainActivity : ComponentActivity(), OnRobotReadyListener {
 
                         lastRecognizedFacesText =
                             lastRecognizedFacesText,
+
+                        lastRecognizedFaces =
+                            lastRecognizedFaces,
 
                         onToggleFaceRecognition = {
                             toggleFaceRecognition()
@@ -449,6 +455,8 @@ class MainActivity : ComponentActivity(), OnRobotReadyListener {
 
             lastRecognizedFacesText = ""
 
+            lastRecognizedFaces = emptyList()
+
         } else {
 
             faceManager.ensurePermission()
@@ -555,6 +563,8 @@ fun FaceScreen(
 
     lastRecognizedFacesText: String,
 
+    lastRecognizedFaces: List<ContactModel>,
+
     onToggleFaceRecognition: () -> Unit,
 
     onTakePhotosRequested: () -> Unit,
@@ -583,6 +593,9 @@ fun FaceScreen(
     onTogglePersonDetection: () -> Unit
 ) {
 
+    var isSavingPhoto by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
     val context = LocalContext.current
 
     val coroutineScope =
@@ -606,6 +619,12 @@ fun FaceScreen(
         )
     }
 
+    // Pantalla a la que se debe ir una vez concedido el permiso de cámara
+    // (puede ser Screen.CAMERA, Screen.DETECTION o Screen.FACE_CAPTURE, según qué botón lo pidió)
+    var pendingScreenAfterPermission by remember {
+        mutableStateOf<Screen?>(null)
+    }
+
     val cameraPermissionLauncher =
         rememberLauncherForActivityResult(
             contract =
@@ -615,8 +634,10 @@ fun FaceScreen(
             hasCameraPermission = granted
 
             if (granted) {
-                currentScreen = Screen.CAMERA
+                currentScreen = pendingScreenAfterPermission ?: Screen.CAMERA
             }
+
+            pendingScreenAfterPermission = null
         }
 
     // ---------------------------------------------------------
@@ -691,275 +712,6 @@ fun FaceScreen(
             )
 
             showManageFacesDialog = true
-        }
-    }
-
-    // =========================================================
-    // TFLITE
-    // =========================================================
-
-    fun runTFLiteTest() {
-
-        tfliteResultText =
-            "Cargando modelo..."
-
-        coroutineScope.launch(Dispatchers.Default) {
-
-            try {
-
-                val model =
-                    SimpleTFLiteModel(
-                        context,
-                        "modelo.tflite"
-                    )
-
-                val inputTensor =
-                    model.interpreter
-                        .getInputTensor(0)
-
-                val outputTensor =
-                    model.interpreter
-                        .getOutputTensor(0)
-
-                val inputShape =
-                    inputTensor.shape()
-
-                val outputShape =
-                    outputTensor.shape()
-
-                val inputType =
-                    inputTensor.dataType()
-
-                val outputType =
-                    outputTensor.dataType()
-
-                Log.d(
-                    "TFLITE_TEST",
-                    "Entrada: " +
-                            inputShape.joinToString() +
-                            " tipo=$inputType"
-                )
-
-                Log.d(
-                    "TFLITE_TEST",
-                    "Salida: " +
-                            outputShape.joinToString() +
-                            " tipo=$outputType"
-                )
-
-                // -------------------------------------------------
-                // TAMAÑO DE IMAGEN
-                // -------------------------------------------------
-
-                val inputHeight =
-                    inputShape[1]
-
-                val inputWidth =
-                    inputShape[2]
-
-                // -------------------------------------------------
-                // IMAGEN DE PRUEBA
-                // -------------------------------------------------
-
-                val testBitmap =
-                    Bitmap.createBitmap(
-                        inputWidth,
-                        inputHeight,
-                        Bitmap.Config.ARGB_8888
-                    ).apply {
-
-                        eraseColor(
-                            android.graphics.Color.GRAY
-                        )
-                    }
-
-                // -------------------------------------------------
-                // PREPARAR ENTRADA
-                // -------------------------------------------------
-
-                val input: ByteBuffer
-
-                when (inputType) {
-
-                    org.tensorflow.lite.DataType.FLOAT32 -> {
-
-                        input =
-                            bitmapToByteBuffer(
-                                testBitmap,
-                                inputWidth
-                            )
-                    }
-
-                    org.tensorflow.lite.DataType.UINT8 -> {
-
-                        input =
-                            ByteBuffer.allocateDirect(
-                                inputWidth *
-                                        inputHeight *
-                                        3
-                            ).order(
-                                ByteOrder.nativeOrder()
-                            )
-
-                        val pixels =
-                            IntArray(
-                                inputWidth *
-                                        inputHeight
-                            )
-
-                        testBitmap.getPixels(
-                            pixels,
-                            0,
-                            inputWidth,
-                            0,
-                            0,
-                            inputWidth,
-                            inputHeight
-                        )
-
-                        for (pixel in pixels) {
-
-                            input.put(
-                                ((pixel shr 16) and 0xFF)
-                                    .toByte()
-                            )
-
-                            input.put(
-                                ((pixel shr 8) and 0xFF)
-                                    .toByte()
-                            )
-
-                            input.put(
-                                (pixel and 0xFF)
-                                    .toByte()
-                            )
-                        }
-
-                        input.rewind()
-                    }
-
-                    org.tensorflow.lite.DataType.INT8 -> {
-
-                        input =
-                            ByteBuffer.allocateDirect(
-                                inputWidth *
-                                        inputHeight *
-                                        3
-                            ).order(
-                                ByteOrder.nativeOrder()
-                            )
-
-                        val pixels =
-                            IntArray(
-                                inputWidth *
-                                        inputHeight
-                            )
-
-                        testBitmap.getPixels(
-                            pixels,
-                            0,
-                            inputWidth,
-                            0,
-                            0,
-                            inputWidth,
-                            inputHeight
-                        )
-
-                        for (pixel in pixels) {
-
-                            input.put(
-                                (
-                                        ((pixel shr 16) and 0xFF) -
-                                                128
-                                        ).toByte()
-                            )
-
-                            input.put(
-                                (
-                                        ((pixel shr 8) and 0xFF) -
-                                                128
-                                        ).toByte()
-                            )
-
-                            input.put(
-                                (
-                                        (pixel and 0xFF) -
-                                                128
-                                        ).toByte()
-                            )
-                        }
-
-                        input.rewind()
-                    }
-
-                    else -> {
-
-                        throw IllegalArgumentException(
-                            "Tipo de entrada no soportado: $inputType"
-                        )
-                    }
-                }
-
-                // -------------------------------------------------
-                // PREPARAR SALIDA
-                // -------------------------------------------------
-
-                val numClases =
-                    outputShape.last()
-
-                val output =
-                    Array(1) {
-                        FloatArray(numClases)
-                    }
-
-                // -------------------------------------------------
-                // EJECUTAR MODELO
-                // -------------------------------------------------
-
-                Log.d(
-                    "TFLITE_TEST",
-                    "Bytes de entrada: " +
-                            input.capacity()
-                )
-
-                model.interpreter.run(
-                    input,
-                    output
-                )
-
-                // -------------------------------------------------
-                // RESULTADO
-                // -------------------------------------------------
-
-                val resumen =
-                    "Entrada: ${inputShape.joinToString()}\n" +
-                            "Tipo entrada: $inputType\n" +
-                            "Bytes entrada: ${input.capacity()}\n" +
-                            "Salida: ${outputShape.joinToString()}\n" +
-                            "Tipo salida: $outputType\n" +
-                            "Primeros valores: ${output[0].take(5)}"
-
-                Log.d(
-                    "TFLITE_TEST",
-                    resumen
-                )
-
-                tfliteResultText =
-                    resumen
-
-                model.close()
-
-            } catch (e: Exception) {
-
-                Log.e(
-                    "TFLITE_TEST",
-                    "Error lanzando el modelo",
-                    e
-                )
-
-                tfliteResultText =
-                    "Error: ${e.message}"
-            }
         }
     }
 
@@ -1319,6 +1071,13 @@ fun FaceScreen(
                 )
             }
 
+            currentScreen == Screen.EMOTION &&
+                    hasCameraPermission -> {
+                EmotionCameraScreen(
+                    lifecycleOwner = lifecycleOwner
+                )
+            }
+
             currentScreen ==
                     Screen.MAP -> {
 
@@ -1347,6 +1106,10 @@ fun FaceScreen(
         // =====================================================
         // CONTROLES INFERIORES
         // =====================================================
+
+        // Mientras se está en la pantalla de captura de caras, dejamos que
+        // sea ella quien controle sus propios botones (Capturar / Repetir / Cerrar)
+        // para no solaparlos con esta barra.
 
         var showOptions by remember {
             mutableStateOf(false)
@@ -1510,6 +1273,70 @@ fun FaceScreen(
                             "Gestionar caras"
                         )
                     }
+                    // -----------------------------------------
+                // CLASIFICACIÓN DE EMOCIONES
+                // -----------------------------------------
+
+                    Button(
+                        onClick = {
+                            when {
+                                currentScreen == Screen.EMOTION -> {
+                                    currentScreen = Screen.FACE
+                                }
+
+                                hasCameraPermission -> {
+                                    currentScreen = Screen.EMOTION
+                                }
+
+                                else -> {
+                                    pendingScreenAfterPermission = Screen.EMOTION
+
+                                    cameraPermissionLauncher.launch(
+                                        Manifest.permission.CAMERA
+                                    )
+                                }
+                            }
+                        }
+                    ) {
+                        Text(
+                            if (currentScreen == Screen.EMOTION) {
+                                "Volver"
+                            } else {
+                                "Detectar emociones"
+                            }
+                        )
+                    }
+
+// -----------------------------------------
+// CAPTURAR Y GUARDAR FOTO EN SEGUNDO PLANO
+// -----------------------------------------
+                    Button(
+                        onClick = {
+                            if (!faceRecognitionActive) {
+                                Toast.makeText(context, "Debes iniciar el reconocimiento de caras primero", Toast.LENGTH_SHORT).show()
+                            } else if (lastRecognizedFaces.isEmpty()) {
+                                Toast.makeText(context, "No hay rostros detectados en este momento", Toast.LENGTH_SHORT).show()
+                            } else {
+                                isSavingPhoto = true
+                                captureSilentSnapshot(
+                                    context = context,
+                                    lifecycleOwner = lifecycleOwner,
+                                    faces = lastRecognizedFaces
+                                ) { success ->
+                                    isSavingPhoto = false
+                                    if (success) {
+                                        Toast.makeText(context, "¡Foto con recuadros guardada en la galería!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Error al guardar la foto", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isSavingPhoto
+                    ) {
+                        Text(if (isSavingPhoto) "Guardando..." else "Capturar y Guardar Foto")
+                    }
+
 
                     // -----------------------------------------
                     // CÁMARA RGB
@@ -1536,6 +1363,9 @@ fun FaceScreen(
 
                                 else -> {
 
+                                    pendingScreenAfterPermission =
+                                        Screen.CAMERA
+
                                     cameraPermissionLauncher
                                         .launch(
                                             Manifest.permission.CAMERA
@@ -1555,6 +1385,57 @@ fun FaceScreen(
                                 "Volver"
                             } else {
                                 "Cámara RGB"
+                            }
+                        )
+                    }
+
+                    // -----------------------------------------
+                    // DETECCIÓN EN TIEMPO REAL (YOLO)
+                    // -----------------------------------------
+
+                    Button(
+
+                        onClick = {
+
+                            when {
+
+                                currentScreen ==
+                                        Screen.DETECTION -> {
+
+                                    currentScreen =
+                                        Screen.FACE
+                                }
+
+                                hasCameraPermission -> {
+
+                                    currentScreen =
+                                        Screen.DETECTION
+                                }
+
+                                else -> {
+
+                                    pendingScreenAfterPermission =
+                                        Screen.DETECTION
+
+                                    cameraPermissionLauncher
+                                        .launch(
+                                            Manifest.permission.CAMERA
+                                        )
+                                }
+                            }
+                        }
+
+                    ) {
+
+                        Text(
+
+                            if (
+                                currentScreen ==
+                                Screen.DETECTION
+                            ) {
+                                "Volver"
+                            } else {
+                                "Detección en tiempo real"
                             }
                         )
                     }
@@ -1632,23 +1513,6 @@ fun FaceScreen(
 
                         Text(
                             "Posición"
-                        )
-                    }
-
-                    // -----------------------------------------
-                    // TFLITE
-                    // -----------------------------------------
-
-                    Button(
-
-                        onClick = {
-                            runTFLiteTest()
-                        }
-
-                    ) {
-
-                        Text(
-                            "Probar TFLite"
                         )
                     }
 
